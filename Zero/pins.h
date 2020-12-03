@@ -22,3 +22,4 @@ struct serial_pins {
 const struct gpio_pin PIN_LED = {0, 17};	// PA17
 const struct gpio_pin PIN_SERIAL_DEBUG_TX = {1, 22};  // PB22
 const struct gpio_pin PIN_SERIAL_DEBUG_RX = {1, 23};  // PB23
+const struct gpio_pin PIN_6 = {0, 20};  // PA20,  TCC0 / WO6 function F
