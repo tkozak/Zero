@@ -14,12 +14,11 @@ struct gpio_pin {
 	uint8_t pin;
 };
 
-struct serial_pins {
-	struct gpio_pin tx;
-	struct gpio_pin rx;
-};
-
 const struct gpio_pin PIN_LED = {0, 17};	// PA17
 const struct gpio_pin PIN_SERIAL_DEBUG_TX = {1, 22};  // PB22
 const struct gpio_pin PIN_SERIAL_DEBUG_RX = {1, 23};  // PB23
+const uint8_t PAD_SERIAL_DEBUG_TX = 0x1;
+const uint8_t PAD_SERIAL_DEBUG_RX = 0x3;
 const struct gpio_pin PIN_6 = {0, 20};  // PA20,  TCC0 / WO6 function F
+	
+const struct gpio_pin PIN_AIN = {0, 2};  // PA02 

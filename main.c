@@ -64,15 +64,24 @@ void RTC_Handler( void ) {
 		
 		rx_complete = 0; rx_count = 0; // mark the command as processed
 	}
-	RTC->MODE0.INTFLAG.reg |= 1; // clear interrupt flag
+	RTC->MODE0.INTFLAG.reg = RTC_MODE0_INTFLAG_CMP0; // clear interrupt flag
 }
 
 
 void SERCOM5_Handler (void) {
-	if (SERCOM5->USART.INTFLAG.reg & SERCOM_USART_INTFLAG_RXC) {
-		USART_receive_byte(SERCOM_DEBUG);
-		SERCOM5->USART.INTFLAG.reg |= SERCOM_USART_INTFLAG_RXC; // clear interrupt flag
+	if (SERCOM5->USART.INTFLAG.reg & SERCOM_USART_INTFLAG_RXC) { // data received and unread data in the DATA register
+		USART_receive_byte(SERCOM_DEBUG);  // read DATA register
+		SERCOM5->USART.INTFLAG.reg = SERCOM_USART_INTFLAG_RXC; // clear interrupt flag
 	}
+}
+
+
+void ADC_Handler(void) {
+	
+	while (! (SERCOM_DEBUG->USART.INTFLAG.reg & SERCOM_USART_INTFLAG_DRE));  // wait until data ready
+	SERCOM_DEBUG->USART.DATA.reg = (uint8_t) ADC->RESULT.reg & 0xFF;  // send 8 bits of ADC result
+	
+	ADC->INTFLAG.reg = ADC_INTFLAG_RESRDY;  // clear interrupt flag
 }
 
 
@@ -178,12 +187,50 @@ void TCC_init( void ) {
 }
 
 
+void ADC_init(struct gpio_pin pin, uint8_t ain) {
+	// init analog input on selected pin
+	PORT->Group[pin.group].DIRCLR.reg = 1ul << pin.pin;  // set as input
+	PORT->Group[pin.group].PINCFG[pin.pin].reg = PORT_PINCFG_PMUXEN;
+	if (pin.pin % 2)  // odd 	
+		PORT->Group[pin.group].PMUX[pin.pin/2].reg = PORT_PMUX_PMUXO_B;  // odd pin number, function B for analog
+	else PORT->Group[pin.group].PMUX[pin.pin/2].reg = PORT_PMUX_PMUXE_B;  // even pin number, function B for analog
+	GCLK->CLKCTRL.reg = GCLK_CLKCTRL_ID_ADC | GCLK_CLKCTRL_GEN_GCLK1 | GCLK_CLKCTRL_CLKEN;  // provide clock from GEN 01 (32.768 kHz)
+	PM->APBCMASK.bit.ADC_ = 1; // enable APB bus
+	
+	// load ADC calibration
+	 uint32_t bias = (*((uint32_t *) ADC_FUSES_BIASCAL_ADDR) & ADC_FUSES_BIASCAL_Msk) >> ADC_FUSES_BIASCAL_Pos; // bias 
+	 uint32_t linearity = (*((uint32_t *) ADC_FUSES_LINEARITY_0_ADDR) & ADC_FUSES_LINEARITY_0_Msk) >> ADC_FUSES_LINEARITY_0_Pos;  // Linearity bits 4:0
+	 linearity |= ((*((uint32_t *) ADC_FUSES_LINEARITY_1_ADDR) & ADC_FUSES_LINEARITY_1_Msk) >> ADC_FUSES_LINEARITY_1_Pos) << 5; // // ADC Linearity bits 7:5
+	 ADC->CALIB.reg = ADC_CALIB_BIAS_CAL(bias) | ADC_CALIB_LINEARITY_CAL(linearity);
+	 
+	 ADC->REFCTRL.reg = ADC_REFCTRL_REFSEL_INTVCC1;   // reference set to 1/2 VDDANA = 1.65 V
+	 ADC->SAMPCTRL.reg = ADC_SAMPCTRL_SAMPLEN(5);  // set sampling length to 1/2 clock cycles (minimum)
+	 // prescaler div128, 8bit resolution, free-running mode, single-ended mode, right-adjusted
+	 ADC->CTRLB.reg = ADC_CTRLB_PRESCALER_DIV512 | ADC_CTRLB_RESSEL_8BIT | ADC_CTRLB_FREERUN;  
+	 while (ADC->STATUS.reg & ADC_STATUS_SYNCBUSY); // sync
+	 ADC->INPUTCTRL.reg = ADC_INPUTCTRL_GAIN_1X | ADC_INPUTCTRL_MUXNEG_GND | ADC_INPUTCTRL_MUXPOS(ain);
+	 while (ADC->STATUS.reg & ADC_STATUS_SYNCBUSY); // sync
+	 ADC->INTENSET.bit.RESRDY = 1; // enable interrupt for result ready
+	 ADC->CTRLA.bit.ENABLE = 1; // enable ADC
+	 while (ADC->STATUS.reg & ADC_STATUS_SYNCBUSY); // sync
+	 
+	 // Start conversion
+	 ADC->SWTRIG.bit.START = 1;
+	 while (ADC->STATUS.reg & ADC_STATUS_SYNCBUSY); // sync
+	 while (ADC->INTFLAG.bit.RESRDY == 0);  // Waiting for the 1st conversion to complete
+	 ADC->INTFLAG.reg = ADC_INTFLAG_RESRDY; // do not use the first conversion, clear the Data Ready flag
+	 
+	 NVIC_EnableIRQ(ADC_IRQn);  // enable interrupt
+}
+
+
 int main(void)
 {
 	Clocks_init();
 	RTC_init();
-	USART_init(SERCOM_DEBUG, PIN_SERIAL_DEBUG_TX, PIN_SERIAL_DEBUG_RX, 0x1, 0x3, 9600);  // tx pad[2], rx pad[3]
+	USART_init(SERCOM_DEBUG, PIN_SERIAL_DEBUG_TX, PIN_SERIAL_DEBUG_RX, PAD_SERIAL_DEBUG_TX, PAD_SERIAL_DEBUG_RX, 9600);  // tx pad[2], rx pad[3]
 	TCC_init();
+	ADC_init(PIN_AIN, 0x00);
 	
 	PORT->Group[PIN_LED.group].DIRSET.reg = 1ul << PIN_LED.pin;  // set LED as output
 	PORT->Group[PIN_LED.group].OUTSET.reg = 1ul << PIN_LED.pin;
